@@ -1357,7 +1357,7 @@ class STUDIO_OT_build_turntable(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        from mathutils import Vector, Matrix
+        from mathutils import Vector
         sc = context.scene
         st = sc.studio_render
 
@@ -1749,8 +1749,8 @@ class STUDIO_OT_build_rig(Operator):
 
             # P = E * 4*pi*d^2 -- power scales with the SQUARE of distance
             power = KEY_IRRADIANCE * bright * ratio * 4.0 * math.pi * d * d
-            ob = _mk_area_light(coll, f"Studio {name}", power, panel, pos, tgt,
-                                aspect)
+            _mk_area_light(coll, f"Studio {name}", power, panel, pos, tgt,
+                           aspect)
             made.append((name, power, d, pos, reach))
 
         # --- backdrop ---------------------------------------------------------

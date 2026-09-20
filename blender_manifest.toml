@@ -1,11 +1,12 @@
 schema_version = "1.0.0"
 
 id = "studio_render_presets"
-version = "1.6.0"
+version = "1.6.1"
 name = "Studio Render Presets"
 tagline = "Measured render presets, studio lighting rigs and turntables"
 maintainer = "Travis Forsyth"
 type = "add-on"
+copyright = ["2026 Travis Forsyth"]
 
 website = "https://github.com/mrfrlendly/studio-render-presets"
 
@@ -13,3 +14,6 @@ tags = ["Render", "Scene", "Lighting"]
 
 blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Save rendered tiles and read the watermark font"

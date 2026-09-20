@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.1
+
+- Declare the `files` permission and a copyright holder in the manifest, as the
+  Blender Extensions Platform requires for an add-on that writes render tiles
+  and reads a font file.
+- Removed an unused import and an unused local.
+
 ## 1.6.0
 
 - **Turntable.** The rig orbits the product for a seamless 360° loop; the model
