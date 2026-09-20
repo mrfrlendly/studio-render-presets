@@ -3,9 +3,11 @@ schema_version = "1.0.0"
 id = "studio_render_presets"
 version = "1.6.0"
 name = "Studio Render Presets"
-tagline = "Quick/2K/4K/8K render presets tuned for 16GB machines"
+tagline = "Measured render presets, studio lighting rigs and turntables"
 maintainer = "Travis Forsyth"
 type = "add-on"
+
+website = "https://github.com/mrfrlendly/studio-render-presets"
 
 tags = ["Render", "Scene", "Lighting"]
 

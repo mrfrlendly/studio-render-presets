@@ -56,6 +56,15 @@ tab.
 
 ![Eight frames of a 24-frame turntable](docs/images/turntable.png)
 
+## Watermark
+
+Text in any corner, parented to the camera and drawn at render resolution, so
+it stays the same size whatever the output. It is invisible to every ray type
+except camera — it cannot light the product, cast a shadow, or turn up in a
+reflection.
+
+![The same watermark on a light sweep, on black, and at portrait 3:4](docs/images/watermark.png)
+
 ## Why the numbers are what they are
 
 Irradiance falls off as `P / (4πd²)`, and rig distance scales with object size,
@@ -85,6 +94,11 @@ Rim-heavy setups throw most of their light away from camera, so each setup
 carries an exposure correction solved against an 18% grey sphere — Rim Duo
 needed 2.597×, Clamshell 0.606×. All of them land within 0.505–0.514, so
 switching setup changes the look and not the brightness.
+
+Silhouette Rim is the setup where that correction is easiest to see. Exposure
+sets how far the glow creeps in from the edges, and the body barely moves:
+
+![Silhouette Rim at four exposures, with measured rim and body values](docs/images/silhouette-exposure.png)
 
 ## Known limits
 

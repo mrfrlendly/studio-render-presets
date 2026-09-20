@@ -1,0 +1,37 @@
+name: Release
+
+# Tag a version to publish it:
+#   git tag v1.6.0 && git push origin v1.6.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the manifest version
+        run: |
+          manifest=$(grep -E '^version *= *"' blender_manifest.toml | head -1 | cut -d'"' -f2)
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$manifest" != "$tag" ]; then
+            echo "tag $tag does not match manifest version $manifest" >&2
+            exit 1
+          fi
+          echo "version=$manifest" >> "$GITHUB_ENV"
+
+      - name: Build the add-on zip
+        run: ./build.sh
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Studio Render Presets ${{ env.version }}
+          files: dist/studio_render_presets-${{ env.version }}.zip
+          generate_release_notes: true

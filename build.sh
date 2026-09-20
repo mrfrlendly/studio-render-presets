@@ -9,6 +9,6 @@ OUT="dist/studio_render_presets-${VERSION}.zip"
 
 mkdir -p dist
 rm -f "$OUT"
-zip -q "$OUT" blender_manifest.toml __init__.py LICENSE README.md
+zip -q "$OUT" blender_manifest.toml __init__.py LICENSE README.md CHANGELOG.md
 echo "built $OUT"
 unzip -l "$OUT"
