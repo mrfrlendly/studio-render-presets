@@ -1,0 +1,15 @@
+# build output
+dist/
+*.zip
+
+# Blender
+*.blend1
+*.blend2
+
+# python
+__pycache__/
+*.py[cod]
+
+# os
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+schema_version = "1.0.0"
+
+id = "studio_render_presets"
+version = "1.6.0"
+name = "Studio Render Presets"
+tagline = "Quick/2K/4K/8K render presets tuned for 16GB machines"
+maintainer = "Travis Forsyth"
+type = "add-on"
+
+tags = ["Render", "Scene", "Lighting"]
+
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
