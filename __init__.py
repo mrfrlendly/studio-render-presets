@@ -128,6 +128,139 @@ def preset_profile(key):
 
 
 # ---------------------------------------------------------------------------
+#  Output formats
+# ---------------------------------------------------------------------------
+#  Blender 4.5/5.x split ImageFormatSettings into media types. `file_format`
+#  is filtered by `media_type`, so while the scene is set to video the enum
+#  contains ONLY 'FFMPEG' and assigning 'PNG' raises TypeError. Anything that
+#  changes the output format has to set the media type first -- that is what
+#  set_output_format() below is for. On 4.2, where media_type does not exist,
+#  the enum is unfiltered and the extra step is skipped.
+#
+#  Alpha is a per-codec limit, not a preference: H.264, H.265 and ProRes
+#  advertise BW/RGB only, so asking for RGBA on those raises as well. The
+#  `alpha` flag records which containers can actually carry it.
+#
+#  movie   : writes one file for the whole range rather than a frame per file
+#  alpha   : codec accepts an alpha channel (RGBA)
+#  depth   : bit depth; video is 8-bit except the archival/edit codecs
+
+MEDIA_TYPES = {
+    'FFMPEG': 'VIDEO',
+    'OPEN_EXR_MULTILAYER': 'MULTI_LAYER_IMAGE',
+}
+
+OUTPUT_FORMATS = {
+    'AUTO': dict(
+        label="Preset Default", movie=False, fmt=None, alpha=True, depth=None,
+        blurb="Whatever the resolution preset asks for - PNG for Quick, EXR above it",
+    ),
+    'MP4': dict(
+        label="MP4 / H.264", movie=True, fmt='FFMPEG', container='MPEG4',
+        codec='H264', alpha=False, depth='8', ext=".mp4",
+        blurb="Plays anywhere. The one to send someone",
+    ),
+    'MP4_H265': dict(
+        label="MP4 / H.265", movie=True, fmt='FFMPEG', container='MPEG4',
+        codec='H265', alpha=False, depth='8', ext=".mp4",
+        blurb="Half the size of H.264 at the same quality, but fussier to open",
+    ),
+    'WEBM': dict(
+        label="WebM / VP9", movie=True, fmt='FFMPEG', container='WEBM',
+        codec='WEBM', alpha=True, depth='8', ext=".webm",
+        blurb="For a web page, and the only video option here that keeps alpha",
+    ),
+    'PRORES': dict(
+        label="QuickTime / ProRes", movie=True, fmt='FFMPEG', container='QUICKTIME',
+        codec='PRORES', alpha=False, depth='10', ext=".mov",
+        blurb="Large, barely compressed, for handing to an editor",
+    ),
+    'FFV1': dict(
+        label="MKV / FFV1 lossless", movie=True, fmt='FFMPEG', container='MKV',
+        codec='FFV1', alpha=True, depth='8', ext=".mkv",
+        blurb="Mathematically lossless archive. Very large",
+    ),
+    'PNG_SEQ': dict(
+        label="PNG Sequence", movie=False, fmt='PNG', alpha=True, depth='16',
+        blurb="A frame per file. Needed for GIF, and the safest thing to "
+              "re-encode from later",
+    ),
+}
+
+#  Quality maps onto FFmpeg's CRF. Lossless is only honoured by codecs that
+#  have a lossless mode; H.264 will simply use its highest quality.
+VIDEO_QUALITY = {
+    'LOSSLESS':      "Lossless",
+    'PERC_LOSSLESS': "Near-lossless",
+    'HIGH':          "High",
+    'MEDIUM':        "Medium",
+    'LOW':           "Low",
+}
+
+
+def _try_set(owner, attr, value):
+    """Assign an enum that some codecs do not offer. True if it took."""
+    try:
+        setattr(owner, attr, value)
+        return True
+    except TypeError:
+        return False
+
+
+def set_output_format(rnd, key, fps=None, quality='HIGH'):
+    """Point the scene's output at one of OUTPUT_FORMATS.
+
+    Returns a list of notes describing anything that had to be adjusted.
+    Order matters: media_type, then file_format, then the settings that are
+    filtered by the format.
+    """
+    spec = OUTPUT_FORMATS[key]
+    notes = []
+    ims = rnd.image_settings
+
+    if hasattr(ims, "media_type"):
+        ims.media_type = MEDIA_TYPES.get(spec["fmt"], 'IMAGE')
+    ims.file_format = spec["fmt"]
+
+    # The codec has to be chosen BEFORE colour mode and depth, because it is
+    # what filters them: asking for RGBA while the container is still on the
+    # previous codec silently loses the alpha that this one supports.
+    if spec["movie"]:
+        ff = rnd.ffmpeg
+        ff.format = spec["container"]
+        ff.codec = spec["codec"]
+        _try_set(ff, 'constant_rate_factor', quality)
+        # A turntable has no sound, and an empty audio stream upsets some players.
+        _try_set(ff, 'audio_codec', 'NONE')
+        ff.use_autosplit = False
+        if fps:
+            rnd.fps, rnd.fps_base = int(round(fps)), 1.0
+        # A keyframe every half second keeps scrubbing responsive without
+        # meaningfully growing the file.
+        ff.gopsize = max(1, int(round(rnd.fps / 2.0)))
+        if spec["codec"] == 'PRORES':
+            _try_set(ff, 'ffmpeg_prores_profile', '3')
+
+    # RGBA first; fall back rather than raise on a codec that has no alpha.
+    if not _try_set(ims, 'color_mode', 'RGBA' if spec["alpha"] else 'RGB'):
+        _try_set(ims, 'color_mode', 'RGB')
+        if spec["alpha"]:
+            notes.append("no alpha channel available")
+    if spec["depth"] and not _try_set(ims, 'color_depth', spec["depth"]):
+        _try_set(ims, 'color_depth', '8')
+
+    return notes
+
+
+def output_is_movie(scene):
+    """True when the scene writes one file for the whole frame range."""
+    ims = scene.render.image_settings
+    if getattr(ims, "media_type", None) == 'VIDEO':
+        return True
+    return ims.file_format in ('FFMPEG', 'AVI_JPEG', 'AVI_RAW')
+
+
+# ---------------------------------------------------------------------------
 #  Lighting setups and backdrop tones
 # ---------------------------------------------------------------------------
 #  Lighting setups. Each light is:
@@ -352,6 +485,27 @@ class StudioRenderSettings(PropertyGroup):
     calib_data: StringProperty(
         name="Calibration", default="{}",
         description="Measured render-time fits, per preset and device (JSON)",
+    )
+    # ---- output format ----
+    output_format: EnumProperty(
+        name="Format",
+        items=[(k, OUTPUT_FORMATS[k]["label"], OUTPUT_FORMATS[k]["blurb"])
+               for k in ('AUTO', 'MP4', 'MP4_H265', 'WEBM', 'PRORES', 'FFV1',
+                         'PNG_SEQ')],
+        default='AUTO',
+        description="What the render is written as. Applied by the resolution "
+                    "preset and by Build Turntable",
+    )
+    video_quality: EnumProperty(
+        name="Quality",
+        items=[(k, v, f"{v} quality") for k, v in VIDEO_QUALITY.items()],
+        default='HIGH',
+        description="Encoder quality. Lossless is ignored by codecs that have "
+                    "no lossless mode",
+    )
+    video_fps: IntProperty(
+        name="FPS", default=24, min=1, max=240,
+        description="Frames per second written into the video file",
     )
     # ---- product studio rig ----
     rig_setup: EnumProperty(
@@ -601,14 +755,20 @@ def apply_preset(context, key, report=None):
 
     # ---- output -----------------------------------------------------------
     rnd.filepath = st.output_dir
-    rnd.image_settings.file_format = p["fmt"]
-    rnd.image_settings.color_mode = 'RGBA'
-    rnd.image_settings.color_depth = p["depth"]
-    if p["fmt"] == 'OPEN_EXR':
-        try:
-            rnd.image_settings.exr_codec = 'ZIP'
-        except Exception:
-            pass
+    if st.output_format == 'AUTO':
+        # The preset's own still format. Routed through set_output_format so
+        # the media type is cleared first -- otherwise this raises whenever
+        # the scene is currently pointed at video.
+        if hasattr(rnd.image_settings, "media_type"):
+            rnd.image_settings.media_type = 'IMAGE'
+        rnd.image_settings.file_format = p["fmt"]
+        _try_set(rnd.image_settings, 'color_mode', 'RGBA')
+        _try_set(rnd.image_settings, 'color_depth', p["depth"])
+        if p["fmt"] == 'OPEN_EXR':
+            _try_set(rnd.image_settings, 'exr_codec', 'ZIP')
+    else:
+        notes += set_output_format(rnd, st.output_format,
+                                   fps=st.video_fps, quality=st.video_quality)
 
     if report:
         report({'INFO'},
@@ -643,6 +803,79 @@ class STUDIO_OT_apply_and_render(Operator):
 #  Region render (modal, so the UI stays alive between tiles)
 # ---------------------------------------------------------------------------
 
+class STUDIO_OT_apply_output(Operator):
+    bl_idname = "studio.apply_output"
+    bl_label = "Apply Output Format"
+    bl_description = "Point the scene's output at the chosen format"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        sc = context.scene
+        st = sc.studio_render
+        key = st.output_format
+        if key == 'AUTO':
+            # An animation range means a sequence; a single frame means the
+            # still format the resolution preset asks for. Only the output is
+            # touched here -- resolution and sampling stay as they are.
+            if sc.frame_end > sc.frame_start:
+                key = 'PNG_SEQ'
+            else:
+                rnd = sc.render
+                p = PRESETS[st.preset]
+                if hasattr(rnd.image_settings, "media_type"):
+                    rnd.image_settings.media_type = 'IMAGE'
+                rnd.image_settings.file_format = p["fmt"]
+                _try_set(rnd.image_settings, 'color_mode', 'RGBA')
+                _try_set(rnd.image_settings, 'color_depth', p["depth"])
+                rnd.filepath = st.output_dir
+                self.report({'INFO'}, f"{p['label']} still: {p['fmt']}")
+                return {'FINISHED'}
+
+        notes = set_output_format(sc.render, key, fps=st.video_fps,
+                                  quality=st.video_quality)
+        sc.render.filepath = st.output_dir
+        spec = OUTPUT_FORMATS[key]
+        msg = spec["label"]
+        if spec["movie"]:
+            n = sc.frame_end - sc.frame_start + 1
+            msg += f": {n} frames, {n / max(sc.render.fps, 1):.1f}s at {sc.render.fps}fps"
+        if notes:
+            msg += " (" + ", ".join(notes) + ")"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+#  Blender has no GIF encoder -- its container list is MPEG4, MKV, WebM, AVI,
+#  DV, Flash, MPEG1/2, Ogg and QuickTime. A good GIF also needs a per-clip
+#  palette, which is two ffmpeg passes. Rather than shell out to a binary the
+#  add-on cannot guarantee is installed (and which the extension rules do not
+#  allow it to depend on), render a PNG sequence and hand over the command.
+
+def _gif_command(scene):
+    st = scene.studio_render
+    base = bpy.path.abspath(st.output_dir).rstrip("/\\")
+    fps = max(scene.render.fps, 1)
+    return (
+        f'cd "{base}" && '
+        f'ffmpeg -framerate {fps} -pattern_type glob -i "turntable_*.png" '
+        f'-vf "fps={fps},scale=640:-1:flags=lanczos,split[a][b];'
+        f'[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer" '
+        f'-loop 0 turntable.gif'
+    )
+
+
+class STUDIO_OT_copy_gif_command(Operator):
+    bl_idname = "studio.copy_gif_command"
+    bl_label = "Copy GIF Command"
+    bl_description = ("Blender cannot write GIF. Copy an ffmpeg command that "
+                      "turns the rendered PNG sequence into a looping GIF")
+
+    def execute(self, context):
+        context.window_manager.clipboard = _gif_command(context.scene)
+        self.report({'INFO'}, "ffmpeg command copied to clipboard")
+        return {'FINISHED'}
+
+
 class STUDIO_OT_render_regions(Operator):
     bl_idname = "studio.render_regions"
     bl_label = "Render in Regions"
@@ -673,8 +906,10 @@ class STUDIO_OT_render_regions(Operator):
         rnd.border_min_x, rnd.border_max_x = s["bx0"], s["bx1"]
         rnd.border_min_y, rnd.border_max_y = s["by0"], s["by1"]
         rnd.filepath = s["filepath"]
+        if hasattr(rnd.image_settings, "media_type"):
+            rnd.image_settings.media_type = MEDIA_TYPES.get(s["fmt"], 'IMAGE')
         rnd.image_settings.file_format = s["fmt"]
-        rnd.image_settings.color_depth = s["depth"]
+        _try_set(rnd.image_settings, 'color_depth', s["depth"])
 
     def invoke(self, context, event):
         sc = context.scene
@@ -697,6 +932,8 @@ class STUDIO_OT_render_regions(Operator):
 
         self._save_state(rnd)
         # EXR float out: stitching needs real pixel values, not display-encoded ones
+        if hasattr(rnd.image_settings, "media_type"):
+            rnd.image_settings.media_type = 'IMAGE'
         rnd.image_settings.file_format = 'OPEN_EXR'
         rnd.image_settings.color_depth = '32'
         rnd.use_border = True
@@ -865,10 +1102,23 @@ def scene_warnings(context):
                     out.append("environment is an LDR image, not an HDRI - weak as a light source")
 
     # transparent film into a format with no alpha
-    if sc.render.film_transparent and sc.render.image_settings.file_format in (
-            'JPEG', 'JPEG2000', 'BMP'):
+    movie = output_is_movie(sc)
+    no_alpha = sc.render.image_settings.file_format in ('JPEG', 'JPEG2000', 'BMP')
+    if movie:
+        # H.264, H.265 and ProRes advertise RGB only, so the colour mode is
+        # the honest test of whether alpha survives.
+        no_alpha = sc.render.image_settings.color_mode != 'RGBA'
+    if sc.render.film_transparent and no_alpha:
         out.append("Film>Transparent is on but the output format has no alpha - "
                    "background will save as black")
+
+    if movie:
+        if sc.frame_end <= sc.frame_start:
+            out.append("output is a video but the frame range is a single frame - "
+                       "render the animation (Ctrl+F12), not a still")
+        if sc.studio_render.use_region:
+            out.append("Render in Regions writes stitched EXR stills and cannot "
+                       "produce a video - turn one of the two off")
 
     # camera inside a mesh with outward normals
     cam = sc.camera
@@ -1427,18 +1677,26 @@ class STUDIO_OT_build_turntable(Operator):
         sc.frame_end = n
         sc.frame_current = 1
 
+        out_notes = []
         if st.tt_set_output:
-            sc.render.image_settings.file_format = 'PNG'
-            sc.render.image_settings.color_mode = 'RGBA'
-            sc.render.image_settings.color_depth = '16'
+            # A turntable is an animation, so AUTO means a PNG sequence here
+            # rather than the still preset's single-frame format.
+            key = 'PNG_SEQ' if st.output_format == 'AUTO' else st.output_format
+            out_notes = set_output_format(sc.render, key, fps=st.video_fps,
+                                          quality=st.video_quality)
             base = st.output_dir.rstrip("/\\")
             sc.render.filepath = f"{base}/turntable_"
 
         secs = n / max(sc.render.fps, 1)
-        self.report({'INFO'},
-                    f"Turntable: {n} frames, {secs:.1f}s at {sc.render.fps}fps, "
-                    f"{adopted} rig objects orbiting "
-                    f"({'clockwise' if st.tt_clockwise else 'anticlockwise'})")
+        msg = (f"Turntable: {n} frames, {secs:.1f}s at {sc.render.fps}fps, "
+               f"{adopted} rig objects orbiting "
+               f"({'clockwise' if st.tt_clockwise else 'anticlockwise'})")
+        if st.tt_set_output:
+            key = 'PNG_SEQ' if st.output_format == 'AUTO' else st.output_format
+            msg += f" -> {OUTPUT_FORMATS[key]['label']}"
+            if out_notes:
+                msg += " (" + ", ".join(out_notes) + ")"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -2132,6 +2390,61 @@ class STUDIO_PT_watermark(Panel):
         row.operator("studio.remove_watermark", text="", icon='TRASH')
 
 
+class STUDIO_PT_output(Panel):
+    bl_label = "Animation Output"
+    bl_idname = "STUDIO_PT_output"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Studio"
+    bl_parent_id = "STUDIO_PT_render_presets"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        sc = context.scene
+        st = sc.studio_render
+        key = st.output_format
+        spec = OUTPUT_FORMATS[key]
+
+        layout.prop(st, "output_format", text="")
+
+        if spec["movie"]:
+            col = layout.column(align=True)
+            col.prop(st, "video_quality")
+            col.prop(st, "video_fps")
+
+            n = sc.frame_end - sc.frame_start + 1
+            fps = max(st.video_fps, 1)
+            box = layout.box()
+            c = box.column(align=True)
+            c.scale_y = 0.85
+            c.label(text=f"{n} frames = {n / fps:.1f}s at {fps}fps", icon='TIME')
+            if not spec["alpha"]:
+                c.label(text="No alpha - turn Film>Transparent off",
+                        icon='IMAGE_ALPHA')
+            if sc.render.film_transparent and not spec["alpha"]:
+                c.label(text="Transparent film will save black", icon='ERROR')
+
+        elif key == 'PNG_SEQ':
+            box = layout.box()
+            c = box.column(align=True)
+            c.scale_y = 0.85
+            c.label(text="A frame per file, alpha kept", icon='RENDERLAYERS')
+            c.label(text="Blender cannot write GIF:", icon='INFO')
+            box.operator("studio.copy_gif_command", icon='COPYDOWN')
+
+        row = layout.row(align=True)
+        row.scale_y = 1.2
+        row.operator("studio.apply_output", icon='OUTPUT')
+
+        r = layout.row()
+        r.scale_y = 0.7
+        if spec["movie"]:
+            r.label(text="Render with Ctrl+F12 (animation)", icon='INFO')
+        else:
+            r.label(text="Resolution preset also applies this", icon='INFO')
+
+
 class STUDIO_PT_scene_check(Panel):
     bl_label = "Scene Check"
     bl_idname = "STUDIO_PT_scene_check"
@@ -2180,6 +2493,8 @@ classes = (
     STUDIO_OT_apply_preset,
     STUDIO_OT_apply_and_render,
     STUDIO_OT_render_regions,
+    STUDIO_OT_apply_output,
+    STUDIO_OT_copy_gif_command,
     STUDIO_OT_check_scene,
     STUDIO_OT_fix_viewport,
     STUDIO_OT_calibrate,
@@ -2193,6 +2508,7 @@ classes = (
     STUDIO_PT_render_presets,
     STUDIO_PT_product_studio,
     STUDIO_PT_turntable,
+    STUDIO_PT_output,
     STUDIO_PT_watermark,
     STUDIO_PT_scene_check,
 )

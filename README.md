@@ -17,6 +17,8 @@ was set by measuring renders, not by eye.
 - **Turntable** — a seamless 360° loop where the rig orbits and your model
   never moves.
 - **Watermark** — text in any corner, drawn at render resolution.
+- **Animation output** — MP4, WebM, ProRes, lossless MKV or a PNG sequence,
+  picked once and used by everything that renders.
 - **Scene Check** — finds the usual reasons a render comes out dark or wrong.
 - **Measured render-time estimates** — calibrates against your machine, and
   refines itself after every render.
@@ -65,6 +67,29 @@ reflection.
 
 ![The same watermark on a light sweep, on black, and at portrait 3:4](docs/images/watermark.png)
 
+## Animation output
+
+| Format | Alpha | For |
+| --- | --- | --- |
+| MP4 / H.264 | no | Plays anywhere. The one to send someone |
+| MP4 / H.265 | no | Half the size at matched quality, fussier to open |
+| WebM / VP9 | **yes** | A web page, and the only video option here that keeps alpha |
+| QuickTime / ProRes | no | Large and barely compressed, for an editor |
+| MKV / FFV1 | **yes** | Mathematically lossless archive. Very large |
+| PNG sequence | yes | A frame per file — needed for GIF, safest to re-encode from |
+
+Order matters when setting these, which is why it is done in one place: the
+codec filters what colour modes and bit depths are legal, so asking for RGBA
+before choosing WebM silently gets you RGB.
+
+**GIF is not in that list because Blender cannot write one.** Its containers
+are MPEG-4, MKV, WebM, AVI, DV, Flash, MPEG-1/2, Ogg and QuickTime — there is
+no GIF encoder, and a decent GIF needs a per-clip palette besides. Render a
+PNG sequence and press **Copy GIF Command** for a two-pass `ffmpeg` line that
+builds the palette and applies it. The add-on deliberately does not shell out
+to `ffmpeg` itself: an extension is not allowed to depend on external
+software being installed.
+
 ## Why the numbers are what they are
 
 Irradiance falls off as `P / (4πd²)`, and rig distance scales with object size,
@@ -111,6 +136,8 @@ sets how far the glow creeps in from the edges, and the body barely moves:
 - Render-time calibration is per scene; a much heavier model needs a re-run.
 - The rig is rebuilt rather than edited, so hand adjustments are lost on the
   next Build.
+- GIF has to be made outside Blender; the panel hands you the `ffmpeg`
+  command for it.
 - Not handled: depth of field, HDRI-based lighting as a setup, per-light colour
   temperature, material assignment.
 
@@ -122,7 +149,7 @@ sets how far the glow creeps in from the edges, and the body barely moves:
 
 The add-on is a single `__init__.py` plus `blender_manifest.toml`. The preset
 tables are plain dictionaries at the top of the file — `PRESETS`,
-`LIGHT_SETUPS`, `BACKDROP_TONES` and `KEY_IRRADIANCE`. If you change a setup's
+`OUTPUT_FORMATS`, `LIGHT_SETUPS`, `BACKDROP_TONES` and `KEY_IRRADIANCE`. If you change a setup's
 light ratios, its `exposure` value needs re-solving to keep brightness
 consistent with the others.
 

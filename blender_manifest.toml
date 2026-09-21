@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "studio_render_presets"
-version = "1.6.1"
+version = "1.7.0"
 name = "Studio Render Presets"
 tagline = "Measured render presets, studio lighting rigs and turntables"
 maintainer = "Travis Forsyth"
@@ -17,3 +17,4 @@ license = ["SPDX:GPL-3.0-or-later"]
 
 [permissions]
 files = "Save rendered tiles and read the watermark font"
+clipboard = "Copy the ffmpeg command that builds a GIF"
