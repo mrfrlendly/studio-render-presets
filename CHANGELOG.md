@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Studio, turntable and watermark operations are scoped to the current scene;
+  separate studios also keep their own backdrop and watermark materials.
+- Generated turntable cameras fit an enclosing product sphere so the product
+  stays in frame throughout the orbit, including portrait output.
+- Turntable removal and rebuilding restore the original object transforms and
+  parent inverses. Legacy turntables without saved transforms retain their
+  current pose when removed.
+- Apply + Render starts an animation when a movie output format is selected.
+- Added isolated Blender regression checks for scene isolation, full-orbit
+  framing, parented-camera restoration and still/movie render dispatch.
+
 ## 1.7.0
 
 - **Animation output.** MP4 (H.264 and H.265), WebM/VP9, QuickTime ProRes,

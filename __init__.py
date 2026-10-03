@@ -795,7 +795,8 @@ class STUDIO_OT_apply_and_render(Operator):
 
     def execute(self, context):
         apply_preset(context, context.scene.studio_render.preset, self.report)
-        bpy.ops.render.render('INVOKE_DEFAULT', write_still=True)
+        movie = output_is_movie(context.scene)
+        bpy.ops.render.render('INVOKE_DEFAULT', animation=movie, write_still=not movie)
         return {'FINISHED'}
 
 
@@ -1382,11 +1383,12 @@ def _front_vector(context, center):
 
 def _purge_rig(context):
     """Remove any rig this add-on previously built."""
-    doomed = [o for o in bpy.data.objects if o.get(RIG_TAG)]
+    _purge_turntable(context)
+    doomed = [o for o in context.scene.objects if o.get(RIG_TAG)]
     # A watermark parented to a camera we are about to delete would be
     # orphaned mid-air at its camera-space offset. Take it with us.
     dset = set(doomed)
-    for o in [o for o in bpy.data.objects if o.get(WM_TAG)]:
+    for o in [o for o in context.scene.objects if o.get(WM_TAG)]:
         if o.parent in dset:
             data = o.data
             bpy.data.objects.remove(o, do_unlink=True)
@@ -1404,16 +1406,19 @@ def _purge_rig(context):
                     coll.remove(data)
                 except Exception:
                     pass
-    c = bpy.data.collections.get(STUDIO_COLLECTION)
+    c = next((c for c in context.scene.collection.children
+              if c.get(RIG_TAG) or c.name == STUDIO_COLLECTION), None)
     if c and not c.objects:
         bpy.data.collections.remove(c)
     return len(doomed)
 
 
 def _studio_collection(context):
-    c = bpy.data.collections.get(STUDIO_COLLECTION)
+    c = next((c for c in context.scene.collection.children
+              if c.get(RIG_TAG) or c.name == STUDIO_COLLECTION), None)
     if c is None:
         c = bpy.data.collections.new(STUDIO_COLLECTION)
+        c[RIG_TAG] = True
         context.scene.collection.children.link(c)
     return c
 
@@ -1501,7 +1506,7 @@ def _build_backdrop(coll, center, floor_z, width, front_depth, back_depth,
             pl.use_smooth = True
 
     mat = bpy.data.materials.get("Studio Backdrop")
-    if mat is None:
+    if mat is None or mat.users:
         mat = bpy.data.materials.new("Studio Backdrop")
         mat.use_nodes = True
     bsdf = next((n for n in mat.node_tree.nodes
@@ -1570,17 +1575,17 @@ def _action_fcurves(ob):
     return list(getattr(act, "fcurves", []))
 
 
-def _turntable_empty():
-    for o in bpy.data.objects:
+def _turntable_empty(context):
+    for o in context.scene.objects:
         if o.get(TT_TAG) == "pivot":
             return o
     return None
 
 
 def _purge_turntable(context):
-    """Unparent everything we adopted, restoring prior parents, then drop the
-    pivot. Children keep their world transform."""
-    pivot = _turntable_empty()
+    """Restore adopted objects to their original parents and transforms."""
+    from mathutils import Matrix
+    pivot = _turntable_empty(context)
     if pivot is None:
         return 0
     context.view_layer.update()
@@ -1590,7 +1595,15 @@ def _purge_turntable(context):
         o.parent = bpy.data.objects.get(prev) if prev else None
         if o.parent is not None:
             o.matrix_parent_inverse = o.parent.matrix_world.inverted()
-        o.matrix_world = world
+        if "studio_tt_basis" in o:
+            vals = o["studio_tt_basis"]
+            o.matrix_basis = Matrix([vals[i:i + 4] for i in range(0, 16, 4)])
+            vals = o["studio_tt_parent_inverse"]
+            o.matrix_parent_inverse = Matrix([vals[i:i + 4] for i in range(0, 16, 4)])
+            del o["studio_tt_basis"]
+            del o["studio_tt_parent_inverse"]
+        else:
+            o.matrix_world = world  # legacy rigs have no saved starting transform
         try:
             del o[TT_PARENT_KEY]
         except Exception:
@@ -1611,7 +1624,7 @@ class STUDIO_OT_build_turntable(Operator):
         sc = context.scene
         st = sc.studio_render
 
-        rig = [o for o in bpy.data.objects if o.get(RIG_TAG)]
+        rig = [o for o in sc.objects if o.get(RIG_TAG)]
         if not rig:
             self.report({'ERROR'}, "Build the product studio first")
             return {'CANCELLED'}
@@ -1648,12 +1661,29 @@ class STUDIO_OT_build_turntable(Operator):
             if o is pivot or o.parent is pivot:
                 continue
             world = o.matrix_world.copy()
+            o["studio_tt_basis"] = [v for row in o.matrix_basis for v in row]
+            o["studio_tt_parent_inverse"] = [v for row in o.matrix_parent_inverse for v in row]
             if o.parent is not None:
                 o[TT_PARENT_KEY] = o.parent.name
             o.parent = pivot
             o.matrix_parent_inverse = pivot.matrix_world.inverted()
             o.matrix_world = world
             adopted += 1
+
+        # A sphere enclosing the product fits at every orbit angle. Use the
+        # actual camera frame so portrait and pixel aspect ratios are respected.
+        if cam is not None and cam.get(RIG_TAG) and tgt is not None:
+            subject_radius = tgt.get("studio_subject_radius", 0.0)
+            if subject_radius > 0 and cam.data.type == 'PERSP':
+                frame = cam.data.view_frame(scene=sc)
+                tan_half = min(max(abs(v.x / v.z) for v in frame),
+                               max(abs(v.y / v.z) for v in frame))
+                distance = subject_radius * 1.12 / math.sin(math.atan(tan_half))
+                offset = cam.matrix_world.translation - centre
+                if offset.length < distance and offset.length > 1e-6:
+                    world = cam.matrix_world.copy()
+                    world.translation = centre + offset.normalized() * distance
+                    cam.matrix_world = world
 
         # --- animate -------------------------------------------------------
         n = max(2, int(st.tt_frames))
@@ -1726,9 +1756,9 @@ class STUDIO_OT_remove_turntable(Operator):
 #  plate. This draws at render resolution instead.
 
 
-def _purge_watermark():
+def _purge_watermark(context):
     gone = 0
-    for o in [o for o in bpy.data.objects if o.get(WM_TAG)]:
+    for o in [o for o in context.scene.objects if o.get(WM_TAG)]:
         data = o.data
         bpy.data.objects.remove(o, do_unlink=True)
         if data is not None and data.users == 0:
@@ -1742,7 +1772,7 @@ def _purge_watermark():
 
 def _watermark_material(color, opacity, strength):
     mat = bpy.data.materials.get("Studio Watermark")
-    if mat is None:
+    if mat is None or mat.users:
         mat = bpy.data.materials.new("Studio Watermark")
     mat.use_nodes = True
     nt = mat.node_tree
@@ -1783,7 +1813,7 @@ def _make_watermark(context, report=None):
                 report({'ERROR'}, "No active camera")
             return False
 
-        _purge_watermark()
+        _purge_watermark(context)
         cd = cam.data
 
         # --- how big is the frame, at the depth we will sit at? -------------
@@ -1888,7 +1918,7 @@ class STUDIO_OT_remove_watermark(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        n = _purge_watermark()
+        n = _purge_watermark(context)
         self.report({'INFO'}, f"Removed {n} watermark(s)" if n else "No watermark found")
         return {'FINISHED'}
 
@@ -1918,7 +1948,7 @@ class STUDIO_OT_build_rig(Operator):
             return {'CANCELLED'}
 
         st = context.scene.studio_render
-        had_watermark = any(o.get(WM_TAG) for o in bpy.data.objects)
+        had_watermark = any(o.get(WM_TAG) for o in context.scene.objects)
         _purge_rig(context)
         coll = _studio_collection(context)
 
@@ -1931,6 +1961,7 @@ class STUDIO_OT_build_rig(Operator):
         tgt.empty_display_size = radius * 0.25
         tgt.location = center
         tgt[RIG_TAG] = True
+        tgt["studio_subject_radius"] = size.length * 0.5
         coll.objects.link(tgt)
         anchor_ob = context.active_object
         if anchor_ob is not None and anchor_ob.get(RIG_TAG) is None:
@@ -2308,9 +2339,9 @@ class STUDIO_PT_turntable(Panel):
         layout = self.layout
         sc = context.scene
         st = sc.studio_render
-        live = _turntable_empty() is not None
+        live = _turntable_empty(context) is not None
 
-        if not any(o.get(RIG_TAG) for o in bpy.data.objects):
+        if not any(o.get(RIG_TAG) for o in context.scene.objects):
             layout.label(text="Build the product studio first", icon='ERROR')
 
         col = layout.column(align=True)
@@ -2362,7 +2393,7 @@ class STUDIO_PT_watermark(Panel):
     def draw(self, context):
         layout = self.layout
         st = context.scene.studio_render
-        existing = [o for o in bpy.data.objects if o.get(WM_TAG)]
+        existing = [o for o in context.scene.objects if o.get(WM_TAG)]
 
         if context.scene.camera is None:
             layout.label(text="No active camera", icon='ERROR')

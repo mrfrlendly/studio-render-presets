@@ -15,7 +15,8 @@ was set by measuring renders, not by eye.
 - **Product Studio** — seven lighting setups and a seamless cyclorama, sized
   automatically from the bounding box of your selection.
 - **Turntable** — a seamless 360° loop where the rig orbits and your model
-  never moves.
+  never moves. Generated cameras are pulled back as needed to fit the full
+  orbit; removing the turntable restores the original rig placement.
 - **Watermark** — text in any corner, drawn at render resolution.
 - **Animation output** — MP4, WebM, ProRes, lossless MKV or a PNG sequence,
   picked once and used by everything that renders.
@@ -43,6 +44,10 @@ tab.
 4. Pick a resolution in **Studio Render**, press **Calibrate** once, read the
    time estimate.
 5. **Apply + Render**.
+
+Apply + Render renders the animation range when a movie output is selected.
+PNG and EXR outputs render a still; use **Ctrl+F12** for an image sequence.
+Studio and watermark operations apply to the current scene.
 
 ## Lighting setups
 
